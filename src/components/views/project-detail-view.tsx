@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState } from "react"
-import { useAppStore } from "@/lib/store"
+import { useAppStore, type Project, type Table } from "@/lib/store"
 import { cn, formatRelativeDate } from "@/lib/helpers"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,7 @@ import {
 import { EditProjectDialog } from "@/components/edit-project-dialog"
 import { NewTableDialog } from "@/components/new-table-dialog"
 import { QuickRecordModal } from "@/components/quick-record-modal"
+import { EditRowDialog } from "@/components/edit-row-dialog"
 import { CsvDialog } from "@/components/csv-dialog"
 import { DeleteTableDialog } from "@/components/delete-table-dialog"
 import { EditTableDialog } from "@/components/edit-table-dialog"
@@ -49,6 +50,21 @@ export function ProjectDetailView() {
   const [csvDialogOpen, setCsvDialogOpen] = useState(false)
   const [deleteTableInfo, setDeleteTableInfo] = useState<{ tableId: string; tableName: string; tableEmoji: string } | null>(null)
   const [editTableInfo, setEditTableInfo] = useState<{ tableId: string } | null>(null)
+
+  // EditRowDialog state for quick record
+  const [editRowOpen, setEditRowOpen] = useState(false)
+  const [editRowProject, setEditRowProject] = useState<Project | null>(null)
+  const [editRowTable, setEditRowTable] = useState<Table | null>(null)
+
+  const handleQuickRecordSelect = (projectId: string, tableId: string) => {
+    const proj = projects.find(p => p.id === projectId)
+    const tbl = proj?.tables.find(t => t.id === tableId)
+    if (proj && tbl) {
+      setEditRowProject(proj)
+      setEditRowTable(tbl)
+      setEditRowOpen(true)
+    }
+  }
 
   if (!project) {
     return (
@@ -328,7 +344,18 @@ export function ProjectDetailView() {
         onOpenChange={setNewTableOpen}
         projectId={project.id}
       />
-      <QuickRecordModal open={quickRecordOpen} onOpenChange={setQuickRecordOpen} projectId={project.id} />
+      <QuickRecordModal open={quickRecordOpen} onOpenChange={setQuickRecordOpen} projectId={project.id} onSelectTable={handleQuickRecordSelect} />
+
+      {/* Edit Row Dialog — opened by Quick Record */}
+      {editRowProject && editRowTable && (
+        <EditRowDialog
+          open={editRowOpen}
+          onOpenChange={setEditRowOpen}
+          project={editRowProject}
+          table={editRowTable}
+          row={null}
+        />
+      )}
 
       {/* CSV Import/Export Dialog */}
       <CsvDialog

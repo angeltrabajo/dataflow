@@ -86,6 +86,7 @@ export function TableView() {
     projects,
     selectedProjectId,
     selectedTableId,
+    selectTable,
     goBack,
     setView,
     deleteRow,
@@ -1230,11 +1231,27 @@ export function TableView() {
         row={editRow}
       />
 
-      {/* Quick Record Modal - pre-select current project */}
+      {/* Quick Record Modal - opens EditRowDialog on table select */}
       <QuickRecordModal
         open={quickRecordOpen}
         onOpenChange={setQuickRecordOpen}
         projectId={project?.id}
+        onSelectTable={(projId, tblId) => {
+          const proj = projects.find(p => p.id === projId)
+          const tbl = proj?.tables.find(t => t.id === tblId)
+          if (proj && tbl) {
+            setEditRow(null)
+            // If same table, reuse existing dialog; otherwise navigate
+            if (proj.id === project?.id && tbl.id === table?.id) {
+              setEditRowOpen(true)
+            } else {
+              // Navigate to the selected table and open add row dialog
+              selectTable(proj.id, tbl.id)
+              // Small delay to let the view update, then open the dialog
+              setTimeout(() => setEditRowOpen(true), 100)
+            }
+          }
+        }}
       />
 
       {/* CSV Import/Export Dialog */}

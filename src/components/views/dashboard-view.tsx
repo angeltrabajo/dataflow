@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState } from "react"
-import { useAppStore } from "@/lib/store"
+import { useAppStore, type Project, type Table } from "@/lib/store"
 import { cn } from "@/lib/helpers"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -13,11 +13,27 @@ import {
 } from "lucide-react"
 import { NewProjectDialog } from "@/components/new-project-dialog"
 import { QuickRecordModal } from "@/components/quick-record-modal"
+import { EditRowDialog } from "@/components/edit-row-dialog"
 
 export function DashboardView() {
   const { projects, selectProject } = useAppStore()
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [quickRecordOpen, setQuickRecordOpen] = useState(false)
+
+  // EditRowDialog state for quick record
+  const [editRowOpen, setEditRowOpen] = useState(false)
+  const [editRowProject, setEditRowProject] = useState<Project | null>(null)
+  const [editRowTable, setEditRowTable] = useState<Table | null>(null)
+
+  const handleQuickRecordSelect = (projectId: string, tableId: string) => {
+    const project = projects.find(p => p.id === projectId)
+    const table = project?.tables.find(t => t.id === tableId)
+    if (project && table) {
+      setEditRowProject(project)
+      setEditRowTable(table)
+      setEditRowOpen(true)
+    }
+  }
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-6xl mx-auto">
@@ -109,7 +125,18 @@ export function DashboardView() {
 
       {/* Dialogs */}
       <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} />
-      <QuickRecordModal open={quickRecordOpen} onOpenChange={setQuickRecordOpen} />
+      <QuickRecordModal open={quickRecordOpen} onOpenChange={setQuickRecordOpen} onSelectTable={handleQuickRecordSelect} />
+
+      {/* Edit Row Dialog — opened by Quick Record */}
+      {editRowProject && editRowTable && (
+        <EditRowDialog
+          open={editRowOpen}
+          onOpenChange={setEditRowOpen}
+          project={editRowProject}
+          table={editRowTable}
+          row={null}
+        />
+      )}
     </div>
   )
 }
