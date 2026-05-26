@@ -1,6 +1,6 @@
 // DataFlow Version - Updated with each release
 // This file is the single source of truth for the app version
-export const APP_VERSION = "0.2.0"
+export const APP_VERSION = "0.3.0"
 export const APP_NAME = "DataFlow"
 
 // GitHub repo info for OTA checks
