@@ -1,7 +1,7 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "name": "DataFlow",
-  "changelog": "Versión inicial con sistema de actualizaciones OTA",
-  "date": "2026-05-26T03:00:00Z",
+  "changelog": "Registro Rápido ahora usa el mismo formulario de Agregar (sin código duplicado). Secciones repetidas funcionan en Registro Rápido.",
+  "date": "2026-05-27T03:00:00Z",
   "url": "https://angeltrabajo.github.io/dataflow/"
 }
