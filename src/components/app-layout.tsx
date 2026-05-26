@@ -29,6 +29,7 @@ import {
   ArrowDown,
   Undo2,
   Redo2,
+  RefreshCw,
 } from "lucide-react"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { NewProjectDialog } from "@/components/new-project-dialog"
@@ -40,6 +41,8 @@ import { ProjectDetailView } from "@/components/views/project-detail-view"
 import { TableView } from "@/components/views/table-view"
 import { EditorView } from "@/components/views/editor-view"
 import { SettingsView } from "@/components/views/settings-view"
+import { useVersionCheck } from "@/hooks/use-version-check"
+import { APP_VERSION } from "@/lib/version"
 
 export function AppLayout() {
   const {
@@ -57,6 +60,8 @@ export function AppLayout() {
     undo,
     redo,
   } = useAppStore()
+
+  const { updateAvailable, latestVersion, applyUpdate, dismissUpdate, dismissed } = useVersionCheck()
 
   // Keyboard shortcuts for undo/redo
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -363,6 +368,31 @@ export function AppLayout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
+        {/* Update banner */}
+        {updateAvailable && !dismissed && (
+          <div className="bg-emerald-600 text-white px-4 py-2 flex items-center gap-3 text-sm">
+            <RefreshCw className="h-4 w-4 shrink-0" />
+            <span className="flex-1">
+              Nueva versión <strong>v{latestVersion}</strong> disponible
+            </span>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-7 text-xs gap-1.5 bg-white/20 hover:bg-white/30 text-white border-0"
+              onClick={applyUpdate}
+            >
+              <RefreshCw className="h-3 w-3" />
+              Actualizar
+            </Button>
+            <button
+              className="shrink-0 hover:bg-white/20 rounded p-0.5 transition-colors"
+              onClick={dismissUpdate}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         {/* Mobile header */}
         <div className="flex h-12 items-center gap-2 border-b border-border px-4 md:hidden">
           <Button
