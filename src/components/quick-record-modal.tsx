@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ArrowLeft, ArrowRight, Check, Star, ExternalLink, AlertCircle } from "lucide-react"
+import { ArrowLeft, ArrowRight, Check, Star, ExternalLink, AlertCircle, Repeat, X as XIcon, Plus, Minus } from "lucide-react"
 import { toast } from "sonner"
 
 interface QuickRecordModalProps {
@@ -33,13 +33,16 @@ interface QuickRecordModalProps {
 }
 
 export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordModalProps) {
-  const { projects, addRow, selectTable } = useAppStore()
+  const { projects, addRow, addRowsBatch, selectTable } = useAppStore()
   const [step, setStep] = useState<1 | 2 | 3>(projectId ? 2 : 1)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(projectId ?? null)
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null)
   const [formData, setFormData] = useState<Record<string, any>>({})
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
   const manuallyEditedRef = useRef<Set<string>>(new Set())
+
+  // ─── Repeatable Section State ───
+  const [repeatItems, setRepeatItems] = useState<Record<string, any>[]>([])
 
   // When the modal opens, initialize step based on projectId
   React.useEffect(() => {
@@ -54,6 +57,7 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
       setSelectedTableId(null)
       setFormData({})
       setValidationErrors({})
+      setRepeatItems([])
       manuallyEditedRef.current.clear()
     }
   }, [open, projectId])
@@ -68,6 +72,24 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     [selectedProject, selectedTableId]
   )
 
+  // The repeatable section of the selected table (if any)
+  const rs = selectedTable?.repeatableSection
+
+  // Build virtual allRows that includes current repeat items (unsaved data)
+  // This is critical for SUMAR.SECCION to work correctly in autoCompute
+  const virtualAllRows = useMemo(() => {
+    if (!rs || repeatItems.length === 0) return selectedTable?.rows || []
+    const tempGroupId = '__qr_new_group__'
+    const nonGroupRows = selectedTable?.rows || []
+    const newGroupRows = repeatItems.map((item, idx) => ({
+      ...formData,
+      ...item,
+      _repeatGroupId: tempGroupId,
+      id: `__virtual_${idx}__`,
+    } as any))
+    return [...nonGroupRows, ...newGroupRows]
+  }, [rs, repeatItems, formData, selectedTable?.rows])
+
   // Auto-compute
   // Also recalculates complementary fields when autoCompute affects them
   useEffect(() => {
@@ -75,7 +97,7 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     const updates: Record<string, any> = {}
     for (const col of selectedTable.columns) {
       if (col.autoCompute && col.autoComputeFormula && !manuallyEditedRef.current.has(col.id)) {
-        const result = evaluateAutoCompute(col.autoComputeFormula, formData, selectedTable.columns, projects, selectedProjectId!, selectedTable.rows)
+        const result = evaluateAutoCompute(col.autoComputeFormula, formData, selectedTable.columns, projects, selectedProjectId!, virtualAllRows)
         if (result !== undefined && result !== formData[col.id]) {
           updates[col.id] = result
         }
@@ -83,7 +105,6 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     }
 
     // Complementary recalculation after autoCompute
-    // When autoCompute updates a total or complementary field, recalculate the paired field
     if (Object.keys(updates).length > 0) {
       for (const col of selectedTable.columns) {
         if (!col.complementaryOf) continue
@@ -91,26 +112,22 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
         const totalCol = selectedTable.columns.find(c => c.id === totalColId)
         if (!totalCol) continue
 
-        // Skip if either complementary field was manually edited
         if (manuallyEditedRef.current.has(col.id) || manuallyEditedRef.current.has(otherColId)) continue
 
-        // Only recalculate if autoCompute affected the total or the other complementary field
         const affectedByAutoCompute = updates[totalColId] !== undefined || updates[otherColId] !== undefined
         if (!affectedByAutoCompute) continue
 
-        // Get the total value (prioritize autoCompute result)
         let totalValue: number
         if (totalCol.type === "formula" && totalCol.formula) {
-          const result = evaluateAutoCompute(totalCol.formula, { ...formData, ...updates }, selectedTable.columns, projects, selectedProjectId!, selectedTable.rows)
+          const result = evaluateAutoCompute(totalCol.formula, { ...formData, ...updates }, selectedTable.columns, projects, selectedProjectId!, virtualAllRows)
           totalValue = Number(result) || 0
         } else if (totalCol.autoCompute && totalCol.autoComputeFormula) {
-          const result = evaluateAutoCompute(totalCol.autoComputeFormula, { ...formData, ...updates }, selectedTable.columns, projects, selectedProjectId!, selectedTable.rows)
+          const result = evaluateAutoCompute(totalCol.autoComputeFormula, { ...formData, ...updates }, selectedTable.columns, projects, selectedProjectId!, virtualAllRows)
           totalValue = Number(result) || 0
         } else {
           totalValue = Number(updates[totalColId] ?? formData[totalColId]) || 0
         }
 
-        // Get the other complementary value (prioritize autoCompute result)
         const otherValue = Number(updates[otherColId] ?? formData[otherColId]) || 0
         const expectedValue = Math.max(0, totalValue - otherValue)
 
@@ -123,7 +140,7 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     if (Object.keys(updates).length > 0) {
       setFormData(prev => ({ ...prev, ...updates }))
     }
-  }, [formData, selectedTable, projects, selectedProjectId, step])
+  }, [formData, selectedTable, projects, selectedProjectId, step, virtualAllRows])
 
   // Reset if
   useEffect(() => {
@@ -153,6 +170,7 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     setSelectedTableId(null)
     setFormData({})
     setValidationErrors({})
+    setRepeatItems([])
     manuallyEditedRef.current.clear()
   }
 
@@ -172,8 +190,13 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     const table = selectedProject?.tables.find(t => t.id === id)
     const initData: Record<string, any> = {}
     if (table) {
+      const repeatableColIds = table.repeatableSection ? new Set(table.repeatableSection.columnIds) : new Set<string>()
+
       table.columns.forEach(col => {
         if (col.type === "formula" || col.type === "autonumber") return
+        // Skip repeatable columns from common formData
+        if (repeatableColIds.has(col.id)) return
+
         if (col.defaultValue !== undefined && col.defaultValue !== "") {
           if (col.type === "checkbox") {
             initData[col.id] = col.defaultValue === "true"
@@ -186,12 +209,118 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
           initData[col.id] = col.type === "checkbox" ? false : ""
         }
       })
+
+      // Initialize repeat items if table has a repeatable section
+      if (table.repeatableSection) {
+        const emptyItem: Record<string, any> = {}
+        for (const colId of table.repeatableSection.columnIds) {
+          const col = table.columns.find(c => c.id === colId)
+          if (col && col.type !== "formula" && col.type !== "autonumber" && !col.virtual) {
+            if (col.defaultValue !== undefined && col.defaultValue !== "") {
+              if (col.type === "checkbox") {
+                emptyItem[col.id] = col.defaultValue === "true"
+              } else if (col.type === "number" || col.type === "currency" || col.type === "percentage") {
+                emptyItem[col.id] = Number(col.defaultValue) || ""
+              } else {
+                emptyItem[col.id] = col.defaultValue
+              }
+            } else {
+              emptyItem[col.id] = col.type === "checkbox" ? false : ""
+            }
+          }
+        }
+        // Start with minItems (default 1)
+        const minItems = table.repeatableSection.minItems ?? 1
+        const items = Array.from({ length: minItems }, () => ({ ...emptyItem }))
+        setRepeatItems(items)
+      } else {
+        setRepeatItems([])
+      }
     }
     setFormData(initData)
     setValidationErrors({})
     manuallyEditedRef.current.clear()
     lastComplementaryEditRef.current = null
     setStep(3)
+  }
+
+  // ─── Repeatable items handlers ───
+  const addRepeatItem = () => {
+    if (!rs) return
+    if (rs.maxItems && rs.maxItems > 0 && repeatItems.length >= rs.maxItems) {
+      toast.error(`Máximo ${rs.maxItems} ítems permitidos`)
+      return
+    }
+    const emptyItem: Record<string, any> = {}
+    for (const colId of rs.columnIds) {
+      const col = selectedTable?.columns.find(c => c.id === colId)
+      if (col && col.type !== "formula" && col.type !== "autonumber" && !col.virtual) {
+        if (col.defaultValue !== undefined && col.defaultValue !== "") {
+          if (col.type === "checkbox") {
+            emptyItem[col.id] = col.defaultValue === "true"
+          } else if (col.type === "number" || col.type === "currency" || col.type === "percentage") {
+            emptyItem[col.id] = Number(col.defaultValue) || ""
+          } else {
+            emptyItem[col.id] = col.defaultValue
+          }
+        } else {
+          emptyItem[col.id] = col.type === "checkbox" ? false : ""
+        }
+      }
+    }
+    setRepeatItems(prev => [...prev, emptyItem])
+  }
+
+  const removeRepeatItem = (index: number) => {
+    if (!rs) return
+    if (rs.minItems && repeatItems.length <= rs.minItems) {
+      toast.error(`Mínimo ${rs.minItems} ítems requeridos`)
+      return
+    }
+    setRepeatItems(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const updateRepeatItem = (index: number, colId: string, value: any) => {
+    setRepeatItems(prev => {
+      const updated = [...prev]
+      updated[index] = { ...updated[index], [colId]: value }
+      return updated
+    })
+  }
+
+  // Handle reference auto-fill in repeatable item
+  const handleRepeatRefChange = (itemIndex: number, colId: string, refRowId: string) => {
+    updateRepeatItem(itemIndex, colId, refRowId)
+
+    if (!selectedTable || !selectedProject) return
+
+    const column = selectedTable.columns.find(c => c.id === colId)
+    if (!column?.refAutoFill || !column.refTableId) return
+
+    const refTable = selectedProject.tables.find(t => t.id === column.refTableId)
+    if (!refTable) return
+
+    const refRow = refTable.rows.find(r => r.id === refRowId)
+    if (!refRow) return
+
+    setRepeatItems(prev => {
+      const updated = [...prev]
+      const item = { ...updated[itemIndex] }
+      for (const mapping of column.refAutoFill!) {
+        const sourceValue = refRow[mapping.sourceColId]
+        if (sourceValue !== undefined) {
+          // Only auto-fill if the target column is in the repeatable section
+          if (rs?.columnIds.includes(mapping.targetColId)) {
+            item[mapping.targetColId] = sourceValue
+          } else {
+            // Auto-fill common field in formData
+            setFormData(fd => ({ ...fd, [mapping.targetColId]: sourceValue }))
+          }
+        }
+      }
+      updated[itemIndex] = item
+      return updated
+    })
   }
 
   // Complementary fields: when one complementary field is edited, auto-fill the other
@@ -208,13 +337,12 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     const totalCol = selectedTable.columns.find(c => c.id === totalColId)
     if (!totalCol) return
 
-    // Get the total value: if it's a formula column, evaluate it
     let totalValue: number
     if (totalCol.type === "formula" && totalCol.formula) {
-      const result = evaluateAutoCompute(totalCol.formula, formData, selectedTable.columns, projects, selectedProjectId!, selectedTable.rows)
+      const result = evaluateAutoCompute(totalCol.formula, formData, selectedTable.columns, projects, selectedProjectId!, virtualAllRows)
       totalValue = Number(result) || 0
     } else if (totalCol.autoCompute && totalCol.autoComputeFormula) {
-      const result = evaluateAutoCompute(totalCol.autoComputeFormula, formData, selectedTable.columns, projects, selectedProjectId!, selectedTable.rows)
+      const result = evaluateAutoCompute(totalCol.autoComputeFormula, formData, selectedTable.columns, projects, selectedProjectId!, virtualAllRows)
       totalValue = Number(result) || 0
     } else {
       totalValue = Number(formData[totalColId]) || 0
@@ -228,15 +356,9 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
       return { ...prev, [otherColId]: otherValue }
     })
 
-    // Protect the other field from being overridden by auto-calculation
-    // When the user edits a complementary field, the other field's value is
-    // determined by the complementary logic (Total - editedField), not by
-    // its autoCompute formula. Adding it to manuallyEditedRef prevents
-    // the auto-calculation effect from overwriting the complementary value.
     manuallyEditedRef.current.add(otherColId)
-
     lastComplementaryEditRef.current = null
-  }, [formData, selectedTable, projects, selectedProjectId, step])
+  }, [formData, selectedTable, projects, selectedProjectId, step, virtualAllRows])
 
   const handleFieldChange = (colId: string, value: any) => {
     manuallyEditedRef.current.add(colId)
@@ -294,6 +416,10 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
 
     for (const col of selectedTable.columns) {
       if (col.type === "formula" || col.type === "autonumber") continue
+
+      // Skip repeatable section columns - they're validated separately below
+      if (rs && rs.columnIds.includes(col.id)) continue
+
       if (col.showIf && !evaluateColumnCondition(col.showIf, formData, selectedTable.columns, projects, selectedProjectId)) continue
       if (col.showInForm === false) continue
       if (col.virtual) continue
@@ -336,33 +462,85 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
       }
     }
 
+    // Validate repeatable section items
+    if (rs && repeatItems.length > 0) {
+      const repeatErrors: Record<string, string> = {}
+      for (let itemIdx = 0; itemIdx < repeatItems.length; itemIdx++) {
+        const item = repeatItems[itemIdx]
+        for (const colId of rs.columnIds) {
+          const col = selectedTable.columns.find(c => c.id === colId)
+          if (!col || col.type === "formula" || col.type === "autonumber" || col.virtual) continue
+          if (col.showIf && !evaluateColumnCondition(col.showIf, { ...formData, ...item }, selectedTable.columns, projects, selectedProjectId)) continue
+          if (col.showInForm === false) continue
+
+          const value = item[colId]
+          const isRequired = col.required || (col.requiredIf && evaluateColumnCondition(col.requiredIf, { ...formData, ...item }, selectedTable.columns, projects, selectedProjectId))
+          if (isRequired && (value == null || value === "")) {
+            repeatErrors[`repeat-${itemIdx}-${colId}`] = `Ítem ${itemIdx + 1}: "${col.name}" es requerido`
+          }
+        }
+      }
+
+      if (Object.keys(repeatErrors).length > 0) {
+        setValidationErrors(prev => ({ ...prev, ...repeatErrors }))
+        const firstError = Object.values(repeatErrors)[0]
+        toast.error(firstError)
+        return
+      }
+    }
+
+    // Check min items
+    if (rs && rs.minItems && repeatItems.length < rs.minItems) {
+      toast.error(`Mínimo ${rs.minItems} ítems requeridos en la sección repetible`)
+      return
+    }
+
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors)
       toast.error(Object.values(errors)[0])
       return
     }
 
-    // Build submit data (exclude virtual columns)
+    // Build submit data (exclude virtual columns, formula, autonumber, and repeatable columns)
     const submitData: Record<string, any> = {}
     for (const col of selectedTable.columns) {
       if (col.type === "formula" || col.type === "autonumber") continue
       if (col.virtual) continue
+      // If repeatable section is active, exclude repeatable columns from common data
+      if (rs && rs.columnIds.includes(col.id)) continue
       submitData[col.id] = formData[col.id]
     }
 
-    addRow(selectedProjectId, selectedTableId, submitData)
-    toast.success("Registro agregado")
+    // ─── Handle repeatable section submit ───
+    if (rs && repeatItems.length > 0) {
+      const groupId = Date.now().toString(36) + Math.random().toString(36).slice(2)
+      const rows = repeatItems.map(item => ({
+        ...submitData,
+        ...item,
+      }))
+      addRowsBatch(selectedProjectId, selectedTableId, rows, groupId)
+      toast.success(`${repeatItems.length} registro${repeatItems.length > 1 ? "s" : ""} agregado${repeatItems.length > 1 ? "s" : ""}`)
+    } else {
+      addRow(selectedProjectId, selectedTableId, submitData)
+      toast.success("Registro agregado")
+    }
+
     handleClose(false)
   }
 
   // Get visible columns with section grouping
+  // When there's a repeatable section, only show common fields in the main form
   const { sections } = useMemo(() => {
     if (!selectedTable) return { sections: { noSection: [], named: {} } }
+
+    const repeatColIds = rs ? new Set(rs.columnIds) : new Set<string>()
 
     const cols = selectedTable.columns.filter(c => {
       if (c.type === "formula" || c.type === "autonumber") return false
       if (c.showInForm === false) return false
       if (c.showIf && !evaluateColumnCondition(c.showIf, formData, selectedTable.columns, projects, selectedProjectId!)) return false
+      // If repeatable section is active, exclude repeatable columns from main form
+      if (rs && repeatColIds.has(c.id)) return false
       return true
     })
 
@@ -380,7 +558,7 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
     }
 
     return { sections: { noSection, named: Object.fromEntries(sectionMap) } }
-  }, [selectedTable, formData, projects, selectedProjectId])
+  }, [selectedTable, formData, projects, selectedProjectId, rs])
 
   const renderField = (col: Column) => {
     const isReadOnly = col.readOnly || (col.editableIf && !evaluateColumnCondition(col.editableIf, formData, selectedTable!.columns, projects, selectedProjectId!))
@@ -446,6 +624,58 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
           <p className="text-[10px] text-destructive flex items-center gap-1">
             <AlertCircle className="h-3 w-3" />
             {validationErrors[col.id]}
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  // Render a repeatable item field
+  const renderRepeatField = (col: Column, itemIdx: number) => {
+    const item = repeatItems[itemIdx]
+    const combinedData = { ...formData, ...item }
+    const isRequired = col.required || (col.requiredIf && evaluateColumnCondition(col.requiredIf, combinedData, selectedTable!.columns, projects, selectedProjectId!))
+    const hasError = !!validationErrors[`repeat-${itemIdx}-${col.id}`]
+
+    let selectOptions = col.options || []
+    if (col.dependsOn && col.cascadeOptions) {
+      const parentValue = combinedData[col.dependsOn]
+      if (parentValue) {
+        const cascadeEntry = col.cascadeOptions.find(co => co.parentValue === parentValue)
+        if (cascadeEntry) selectOptions = cascadeEntry.options
+        else selectOptions = []
+      } else {
+        selectOptions = []
+      }
+    }
+
+    return (
+      <div key={col.id} className="space-y-1.5">
+        <Label className="text-sm flex items-center gap-1.5">
+          <span className="text-[10px] opacity-50">{getColumnTypeIcon(col.type)}</span>
+          {col.name}
+          {isRequired && <span className="text-destructive ml-0.5">*</span>}
+          {col.type === "reference" && <ExternalLink className="h-3 w-3 text-rose-400" />}
+        </Label>
+        <QuickFieldInput
+          column={{ ...col, options: selectOptions }}
+          value={item[col.id]}
+          onChange={(val) => updateRepeatItem(itemIdx, col.id, val)}
+          onRefChange={col.type === "reference" ? (refRowId) => handleRepeatRefChange(itemIdx, col.id, refRowId) : undefined}
+          project={selectedProject!}
+          placeholder={col.placeholder || undefined}
+          prefix={col.prefix || undefined}
+          suffix={col.suffix || undefined}
+          minValue={col.minValue}
+          maxValue={col.maxValue}
+          step={col.step}
+          minLength={col.minLength}
+          maxLength={col.maxLength}
+        />
+        {hasError && (
+          <p className="text-[10px] text-destructive flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" />
+            {validationErrors[`repeat-${itemIdx}-${col.id}`]}
           </p>
         )}
       </div>
@@ -519,7 +749,10 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
                     <span className="text-lg">{table.emoji}</span>
                     <div>
                       <p className="font-medium text-sm">{table.name}</p>
-                      <p className="text-xs text-muted-foreground">{table.columns.length} columnas</p>
+                      <p className="text-xs text-muted-foreground">
+                        {table.columns.length} columnas
+                        {table.repeatableSection && " · Sección repetida"}
+                      </p>
                     </div>
                     <ArrowRight className="h-4 w-4 ml-auto text-muted-foreground" />
                   </button>
@@ -536,10 +769,70 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
               <ArrowLeft className="h-3.5 w-3.5" /> Volver
             </Button>
             <div className="space-y-3 max-h-80 overflow-y-auto custom-scrollbar pr-1">
-              {/* Fields without section */}
+              {/* Repeatable Section — at the top */}
+              {rs && rs.columnIds.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="h-px flex-1 bg-indigo-200 dark:bg-indigo-800" />
+                    <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Repeat className="h-3.5 w-3.5" />
+                      {rs.name}
+                    </span>
+                    <div className="h-px flex-1 bg-indigo-200 dark:bg-indigo-800" />
+                  </div>
+
+                  {repeatItems.map((item, itemIdx) => {
+                    const repeatCols = selectedTable.columns.filter(c => rs.columnIds.includes(c.id))
+                    return (
+                      <div
+                        key={itemIdx}
+                        className="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 space-y-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                            Ítem {itemIdx + 1}
+                          </span>
+                          {repeatItems.length > (rs.minItems ?? 1) && (
+                            <button
+                              type="button"
+                              onClick={() => removeRepeatItem(itemIdx)}
+                              className="text-xs text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1"
+                            >
+                              <XIcon className="h-3.5 w-3.5" />
+                              Quitar
+                            </button>
+                          )}
+                        </div>
+                        <div className="space-y-3">
+                          {repeatCols.map(col => {
+                            if (col.type === "formula" || col.type === "autonumber") return null
+                            return renderRepeatField(col, itemIdx)
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {/* Add item button */}
+                  <button
+                    type="button"
+                    onClick={addRepeatItem}
+                    disabled={!!(rs.maxItems && rs.maxItems > 0 && repeatItems.length >= rs.maxItems)}
+                    className="flex items-center justify-center gap-1.5 w-full rounded-lg border-2 border-dashed border-indigo-200 dark:border-indigo-800 bg-indigo-50/30 dark:bg-indigo-950/10 px-4 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100/50 dark:hover:bg-indigo-950/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Agregar ítem
+                    {rs.maxItems && rs.maxItems > 0 && (
+                      <span className="text-[10px] text-muted-foreground ml-1">({repeatItems.length}/{rs.maxItems})</span>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Common fields without section */}
               {sections.noSection.map(col => renderField(col))}
 
-              {/* Fields grouped by section */}
+              {/* Common fields grouped by section */}
               {Object.entries(sections.named).map(([sectionName, cols]) => (
                 <div key={sectionName} className="space-y-2">
                   <div className="flex items-center gap-2 pt-2">
@@ -565,7 +858,9 @@ export function QuickRecordModal({ open, onOpenChange, projectId }: QuickRecordM
                 className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
               >
                 <Check className="h-3.5 w-3.5" />
-                Guardar Registro
+                {rs && repeatItems.length > 1
+                  ? `Guardar ${repeatItems.length} Registros`
+                  : "Guardar Registro"}
               </Button>
             </>
           )}
